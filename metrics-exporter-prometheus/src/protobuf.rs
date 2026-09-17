@@ -1,11 +1,13 @@
 //! Protobuf serialization support for Prometheus metrics.
 
+use metrics_util::storage::Histogram;
 use prost::Message;
 use std::io::Write;
 
 use crate::common::{LabelSet, Snapshot};
 use crate::distribution::Distribution;
 use crate::formatting::sanitize_metric_name;
+use crate::native_histogram::NativeHistogram;
 use crate::recorder::DescriptionReadHandle;
 
 // Include the generated protobuf code
@@ -170,81 +172,27 @@ pub(crate) fn render_protobuf_to_write<W: Write>(
                 }
                 Distribution::Histogram(histogram) => {
                     metric_type = Some(pb::MetricType::Histogram);
-                    let mut buckets = Vec::new();
-                    for (le, count) in histogram.buckets() {
-                        buckets.push(pb::Bucket {
-                            cumulative_count: Some(count),
-                            upper_bound: Some(le),
-
-                            ..Default::default()
-                        });
-                    }
-                    // Add +Inf bucket
-                    buckets.push(pb::Bucket {
-                        cumulative_count: Some(histogram.count()),
-                        upper_bound: Some(f64::INFINITY),
-
-                        ..Default::default()
-                    });
-
                     pb::Metric {
                         label: label_pairs,
-                        histogram: Some(pb::Histogram {
-                            sample_count: Some(histogram.count()),
-                            sample_sum: Some(histogram.sum()),
-                            bucket: buckets,
-
-                            ..Default::default()
-                        }),
-
+                        histogram: Some(pb::Histogram::from(&histogram)),
+                        ..Default::default()
+                    }
+                }
+                Distribution::Both(classic, native) => {
+                    metric_type = Some(pb::MetricType::Histogram);
+                    let mut histogram = pb::Histogram::from(&native);
+                    histogram.bucket = pb::Histogram::from(&classic).bucket;
+                    pb::Metric {
+                        label: label_pairs,
+                        histogram: Some(histogram),
                         ..Default::default()
                     }
                 }
                 Distribution::NativeHistogram(native_hist) => {
                     metric_type = Some(pb::MetricType::Histogram);
-                    // Convert our native histogram into Prometheus native histogram format
-                    let positive_buckets = native_hist.positive_buckets();
-                    let negative_buckets = native_hist.negative_buckets();
-
-                    // Get the current schema being used by the histogram
-                    let schema = native_hist.schema();
-
-                    // Convert positive buckets to spans and deltas (matches Go makeBuckets function)
-                    let (positive_spans, positive_deltas) = make_buckets(&positive_buckets);
-                    let (negative_spans, negative_deltas) = make_buckets(&negative_buckets);
-
-                    // Match Go Write() method output exactly
-                    let mut histogram = pb::Histogram {
-                        sample_count: Some(native_hist.count()),
-                        sample_sum: Some(native_hist.sum()),
-
-                        // Native histogram fields from Go implementation
-                        zero_threshold: Some(native_hist.config().zero_threshold()),
-                        schema: Some(schema),
-                        zero_count: Some(native_hist.zero_count()),
-
-                        positive_span: positive_spans,
-                        positive_delta: positive_deltas,
-
-                        negative_span: negative_spans,
-                        negative_delta: negative_deltas,
-
-                        ..Default::default()
-                    };
-
-                    // Add a no-op span if histogram is empty (matches Go implementation)
-                    if histogram.zero_threshold == Some(0.0)
-                        && histogram.zero_count == Some(0)
-                        && histogram.positive_span.is_empty()
-                        && histogram.negative_span.is_empty()
-                    {
-                        histogram.positive_span =
-                            vec![pb::BucketSpan { offset: Some(0), length: Some(0) }];
-                    }
-
                     pb::Metric {
                         label: label_pairs,
-                        histogram: Some(histogram),
+                        histogram: Some(pb::Histogram::from(&native_hist)),
                         ..Default::default()
                     }
                 }
@@ -272,6 +220,58 @@ pub(crate) fn render_protobuf_to_write<W: Write>(
     }
 
     Ok(())
+}
+
+impl From<&Histogram> for pb::Histogram {
+    fn from(histogram: &Histogram) -> Self {
+        let mut buckets = Vec::new();
+        for (le, count) in histogram.buckets() {
+            buckets.push(pb::Bucket {
+                cumulative_count: Some(count),
+                upper_bound: Some(le),
+                ..Default::default()
+            });
+        }
+        buckets.push(pb::Bucket {
+            cumulative_count: Some(histogram.count()),
+            upper_bound: Some(f64::INFINITY),
+            ..Default::default()
+        });
+        Self {
+            sample_count: Some(histogram.count()),
+            sample_sum: Some(histogram.sum()),
+            bucket: buckets,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<&NativeHistogram> for pb::Histogram {
+    fn from(native_hist: &NativeHistogram) -> Self {
+        let (positive_spans, positive_deltas) = make_buckets(&native_hist.positive_buckets());
+        let (negative_spans, negative_deltas) = make_buckets(&native_hist.negative_buckets());
+        let mut histogram = Self {
+            sample_count: Some(native_hist.count()),
+            sample_sum: Some(native_hist.sum()),
+            zero_threshold: Some(native_hist.config().zero_threshold()),
+            schema: Some(native_hist.schema()),
+            zero_count: Some(native_hist.zero_count()),
+            positive_span: positive_spans,
+            positive_delta: positive_deltas,
+            negative_span: negative_spans,
+            negative_delta: negative_deltas,
+            ..Default::default()
+        };
+        // An empty span distinguishes an empty native histogram from a classic histogram.
+        if histogram.zero_threshold == Some(0.0)
+            && histogram.zero_count == Some(0)
+            && histogram.positive_span.is_empty()
+            && histogram.negative_span.is_empty()
+        {
+            histogram.positive_span = vec![pb::BucketSpan { offset: Some(0), length: Some(0) }];
+        }
+        histogram
+    }
 }
 
 fn label_set_to_protobuf(labels: LabelSet) -> Vec<pb::LabelPair> {
@@ -347,10 +347,85 @@ mod tests {
     use super::*;
     use crate::common::Snapshot;
     use crate::recorder::new_description_handles;
+    use crate::PrometheusBuilder;
     use indexmap::IndexMap;
-    use metrics::SharedString;
+    use metrics::{
+        ExponentialHistogramSnapshot, HistogramBuckets, HistogramSnapshot, SharedString,
+    };
     use prost::Message;
     use std::collections::HashMap;
+
+    #[test]
+    fn test_configured_histogram_records_both_representations() {
+        use crate::{Matcher, NativeHistogramConfig};
+
+        let recorder = PrometheusBuilder::new()
+            .set_buckets_for_metric(Matcher::Full("latency".into()), &[1.0])
+            .unwrap()
+            .set_native_histogram_for_metric(
+                Matcher::Prefix(String::new()),
+                NativeHistogramConfig::new(1.1, 160, 0.0).unwrap(),
+            )
+            .build_recorder();
+        metrics::with_local_recorder(&recorder, || {
+            for value in [0.5, 2.0] {
+                metrics::histogram!("latency").record(value);
+            }
+        });
+        let handle = recorder.handle();
+        let bytes = handle.render_protobuf();
+        let family = pb::MetricFamily::decode_length_delimited(&bytes[..]).unwrap();
+        let histogram = family.metric[0].histogram.as_ref().unwrap();
+        assert_eq!(histogram.sample_count, Some(2));
+        assert_eq!(histogram.bucket[0].cumulative_count, Some(1));
+        assert!(histogram.schema.is_some());
+        assert!(!histogram.positive_span.is_empty());
+        assert!(handle.render().contains("latency_bucket{le=\"1\"} 1"));
+    }
+
+    #[test]
+    fn test_imported_histogram_preserves_both_representations() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let histogram = metrics::with_local_recorder(&recorder, || metrics::histogram!("remote"));
+        let snapshot = HistogramSnapshot {
+            count: 6,
+            sum: 2.0,
+            buckets: HistogramBuckets::Both {
+                classic: vec![(-1.0, 2), (0.0, 3), (2.0, 6)],
+                exponential: ExponentialHistogramSnapshot {
+                    scale: 1,
+                    zero_threshold: 0.125,
+                    zero_count: 1,
+                    positive: [(1, 3)].into(),
+                    negative: [(0, 2)].into(),
+                },
+            },
+        };
+        histogram.set_snapshot(&snapshot);
+        let bytes = handle.render_protobuf();
+        let family = pb::MetricFamily::decode_length_delimited(&bytes[..]).unwrap();
+        assert_eq!(family.r#type, Some(pb::MetricType::Histogram as i32));
+        let actual = family.metric[0].histogram.as_ref().unwrap();
+        assert_eq!(actual.sample_count, Some(6));
+        assert_eq!(actual.sample_sum, Some(2.0));
+        assert_eq!(
+            actual.bucket.iter().map(|b| (b.upper_bound, b.cumulative_count)).collect::<Vec<_>>(),
+            vec![
+                (Some(-1.0), Some(2)),
+                (Some(0.0), Some(3)),
+                (Some(2.0), Some(6)),
+                (Some(f64::INFINITY), Some(6))
+            ]
+        );
+        assert_eq!(actual.schema, Some(1));
+        assert_eq!(actual.zero_count, Some(1));
+        assert_eq!(actual.zero_threshold, Some(0.125));
+        assert_eq!(actual.positive_span, vec![pb::BucketSpan { offset: Some(1), length: Some(1) }]);
+        assert_eq!(actual.positive_delta, vec![3]);
+        assert_eq!(actual.negative_span, vec![pb::BucketSpan { offset: Some(0), length: Some(1) }]);
+        assert_eq!(actual.negative_delta, vec![2]);
+    }
 
     #[test]
     fn test_render_protobuf_counters() {

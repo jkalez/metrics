@@ -135,7 +135,7 @@ impl Inner {
                 .entry(labels)
                 .or_insert_with(|| self.distribution_builder.get_distribution(name.as_str()));
 
-            histogram.get_inner().clear_with(|samples| entry.record_samples(samples));
+            histogram.get_inner().drain_into(entry);
         }
     }
 
@@ -209,12 +209,16 @@ impl Inner {
         }
 
         for (name, mut by_labels) in distributions.drain() {
-            let distribution_type = self.distribution_builder.get_distribution_type(name.as_str());
-
-            // Skip native histograms in text format - they're only supported in protobuf format
-            if distribution_type == "native_histogram" {
+            let Some(distribution_type) =
+                by_labels.values().find_map(|distribution| match distribution {
+                    Distribution::Summary(..) => Some("summary"),
+                    Distribution::Histogram(_) | Distribution::Both(..) => Some("histogram"),
+                    Distribution::NativeHistogram(_) => None,
+                })
+            else {
+                // Skip native histograms in text format - they're only supported in protobuf format
                 continue;
-            }
+            };
 
             let unit = descriptions.get_one(name.as_str()).and_then(|entry| {
                 let (desc, unit) = &*entry;
@@ -248,7 +252,7 @@ impl Inner {
 
                         (sum, summary.count() as u64)
                     }
-                    Distribution::Histogram(histogram) => {
+                    Distribution::Histogram(histogram) | Distribution::Both(histogram, _) => {
                         for (le, count) in histogram.buckets() {
                             write_metric_line(
                                 &mut intermediate,
@@ -274,7 +278,6 @@ impl Inner {
                     }
                     Distribution::NativeHistogram(_) => {
                         // Native histograms are not supported in text format
-                        // This branch should not be reached due to the continue above
                         continue;
                     }
                 };
@@ -326,6 +329,12 @@ impl Inner {
 }
 
 /// A Prometheus recorder.
+///
+/// Imported histogram snapshots replace the aggregate for their series and take precedence over
+/// individual observations on that series. Other series continue recording normally. Classic
+/// buckets are exported as supplied, independently of builder bucket configuration; snapshots
+/// without classic buckets are omitted from text output. Snapshots with unsupported exponential
+/// scales are ignored, leaving the previous aggregate unchanged. Snapshots must have valid counts.
 ///
 /// Most users will not need to interact directly with the recorder, and can simply deal with the
 /// builder methods on [`PrometheusBuilder`](crate::PrometheusBuilder) for building and installing
@@ -464,5 +473,75 @@ impl PrometheusHandle {
     /// grow unboundedly.
     pub fn run_upkeep(&self) {
         self.inner.run_upkeep();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::PrometheusBuilder;
+    use metrics::{HistogramBuckets, HistogramSnapshot};
+    use metrics_util::MetricKindMask;
+    use quanta::Clock;
+    use std::time::Duration;
+
+    #[test]
+    fn test_snapshots_replace_observations_and_previous_snapshots() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let histogram = metrics::with_local_recorder(&recorder, || metrics::histogram!("remote"));
+        histogram.record(99.0);
+
+        for (count, sum) in [(5, 12.0), (5, 12.0), (1, 0.5)] {
+            histogram.set_snapshot(&HistogramSnapshot {
+                count,
+                sum,
+                buckets: HistogramBuckets::Classic(vec![(4.0, count)]),
+            });
+            histogram.record(99.0);
+            handle.run_upkeep();
+            histogram.record_many(99.0, 2);
+            let expected = format!(
+                concat!(
+                    "# TYPE remote histogram\n",
+                    "remote_bucket{{le=\"4\"}} {count}\n",
+                    "remote_bucket{{le=\"+Inf\"}} {count}\n",
+                    "remote_sum {sum}\n",
+                    "remote_count {count}\n\n",
+                ),
+                count = count,
+                sum = sum,
+            );
+            assert_eq!(handle.render(), expected);
+        }
+    }
+
+    #[test]
+    fn test_snapshot_updates_prevent_idle_expiry() {
+        let (clock, mock) = Clock::mock();
+        let recorder = PrometheusBuilder::new()
+            .idle_timeout(MetricKindMask::ALL, Some(Duration::from_secs(10)))
+            .build_with_clock(clock);
+        let handle = recorder.handle();
+        let histogram = metrics::with_local_recorder(&recorder, || metrics::histogram!("remote"));
+        let snapshot = HistogramSnapshot {
+            count: 1,
+            sum: 0.5,
+            buckets: HistogramBuckets::Classic(vec![(1.0, 1)]),
+        };
+        histogram.set_snapshot(&snapshot);
+        let expected = handle.render();
+        assert!(expected.contains("remote_count 1"));
+
+        mock.increment(Duration::from_secs(11));
+        histogram.set_snapshot(&snapshot);
+        assert_eq!(handle.render(), expected);
+
+        mock.increment(Duration::from_secs(11));
+        assert_eq!(handle.render(), "");
+
+        metrics::with_local_recorder(&recorder, || {
+            metrics::histogram!("remote").set_snapshot(&snapshot);
+        });
+        assert_eq!(handle.render(), expected);
     }
 }

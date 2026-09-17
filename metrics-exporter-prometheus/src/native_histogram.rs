@@ -4,8 +4,10 @@
 //! to efficiently represent histogram data without requiring predefined bucket boundaries.
 
 use metrics::atomics::AtomicU64;
+use metrics::ExponentialHistogramSnapshot;
 use std::collections::btree_map::Entry;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::RwLock;
 
 /// IEEE 754 frexp implementation matching Go's math.Frexp behavior.
 /// Returns (mantissa, exponent) such that f = mantissa × 2^exponent,
@@ -44,9 +46,10 @@ fn frexp(f: f64) -> (f64, i32) {
     }
 }
 
-/// Schema constants
-const MIN_SCHEMA: i32 = -4;
-const MAX_SCHEMA: i32 = 8;
+/// Lowest standard exponential schema in the [Prometheus specification](https://prometheus.io/docs/specs/native_histograms/#schema).
+pub const MIN_SCHEMA: i32 = -4;
+/// Highest standard exponential schema in the [Prometheus specification](https://prometheus.io/docs/specs/native_histograms/#schema).
+pub const MAX_SCHEMA: i32 = 8;
 
 /// Native histogram bounds for different schemas (from Go implementation)
 #[allow(clippy::unreadable_literal)]
@@ -708,6 +711,26 @@ impl NativeHistogram {
             positive_buckets: std::sync::RwLock::new(std::collections::BTreeMap::new()),
             negative_buckets: std::sync::RwLock::new(std::collections::BTreeMap::new()),
             bucket_count: AtomicU64::new(0),
+        }
+    }
+
+    /// Imports an aggregate without applying recording-time bucket limits.
+    pub fn from_snapshot(snapshot: ExponentialHistogramSnapshot, count: u64, sum: f64) -> Self {
+        Self {
+            config: NativeHistogramConfig {
+                bucket_factor: 2.0_f64.powf(2.0_f64.powi(-snapshot.scale)),
+                max_buckets: u32::MAX,
+                zero_threshold: snapshot.zero_threshold,
+            },
+            count: AtomicU64::new(count),
+            sum: AtomicU64::new(sum.to_bits()),
+            zero_count: AtomicU64::new(snapshot.zero_count),
+            schema: AtomicI32::new(snapshot.scale),
+            bucket_count: AtomicU64::new(
+                (snapshot.positive.len() + snapshot.negative.len()) as u64,
+            ),
+            positive_buckets: RwLock::new(snapshot.positive),
+            negative_buckets: RwLock::new(snapshot.negative),
         }
     }
 

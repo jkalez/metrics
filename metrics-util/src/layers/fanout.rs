@@ -1,8 +1,8 @@
 use std::{fmt, sync::Arc};
 
 use metrics::{
-    Counter, CounterFn, Gauge, GaugeFn, Histogram, HistogramFn, Key, KeyName, Metadata, Recorder,
-    SharedString, Unit,
+    Counter, CounterFn, Gauge, GaugeFn, Histogram, HistogramFn, HistogramSnapshot, Key, KeyName,
+    Metadata, Recorder, SharedString, Unit,
 };
 
 #[derive(Debug)]
@@ -88,6 +88,12 @@ impl HistogramFn for FanoutHistogram {
     fn record(&self, value: f64) {
         for histogram in &self.histograms {
             histogram.record(value);
+        }
+    }
+
+    fn set_snapshot(&self, snapshot: &HistogramSnapshot) {
+        for histogram in &self.histograms {
+            histogram.set_snapshot(snapshot);
         }
     }
 }

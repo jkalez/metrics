@@ -1,6 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
-use crate::IntoF64;
+use crate::{HistogramSnapshot, IntoF64};
 
 /// A counter handler.
 pub trait CounterFn {
@@ -43,6 +43,14 @@ pub trait HistogramFn {
             self.record(value);
         }
     }
+
+    /// Replaces the histogram with a cumulative snapshot.
+    ///
+    /// Unsupported handlers ignore snapshots by default. Supporting handlers must replace,
+    /// rather than add, the aggregate, including when its count decreases after a source reset.
+    /// Use a separate series for individual observations; mixing snapshots with `record` or
+    /// `record_many` is recorder-specific. Callers are responsible for ordering snapshots.
+    fn set_snapshot(&self, _snapshot: &HistogramSnapshot) {}
 }
 
 /// A counter.
@@ -176,6 +184,15 @@ impl Histogram {
             inner.record_many(value.into_f64(), count)
         }
     }
+
+    /// Replaces the histogram with a cumulative snapshot, if supported by the recorder.
+    ///
+    /// See [`HistogramFn::set_snapshot`] for replacement and mixed-recording semantics.
+    pub fn set_snapshot(&self, snapshot: &HistogramSnapshot) {
+        if let Some(ref inner) = self.inner {
+            inner.set_snapshot(snapshot)
+        }
+    }
 }
 
 impl<T> CounterFn for Arc<T>
@@ -214,6 +231,10 @@ where
     fn record(&self, value: f64) {
         (**self).record(value);
     }
+
+    fn set_snapshot(&self, snapshot: &HistogramSnapshot) {
+        (**self).set_snapshot(snapshot);
+    }
 }
 
 impl<T> From<Arc<T>> for Counter
@@ -240,5 +261,28 @@ where
 {
     fn from(inner: Arc<T>) -> Self {
         Histogram::from_arc(inner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Histogram, HistogramFn, HistogramSnapshot};
+    use crate::HistogramBuckets;
+    use std::sync::Arc;
+
+    #[test]
+    fn unsupported_snapshot_does_not_replay_observations() {
+        struct Unsupported;
+        impl HistogramFn for Unsupported {
+            fn record(&self, _: f64) {
+                panic!("snapshot must not be approximated by observations");
+            }
+        }
+        let histogram = Histogram::from_arc(Arc::new(Unsupported));
+        histogram.set_snapshot(&HistogramSnapshot {
+            count: 5,
+            sum: 10.0,
+            buckets: HistogramBuckets::Classic(vec![(4.0, 5)]),
+        });
     }
 }

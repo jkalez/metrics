@@ -66,6 +66,7 @@ pub struct PrometheusBuilder {
     recency_mask: MetricKindMask,
     global_labels: Option<IndexMap<String, String>>,
     enable_recommended_naming: bool,
+    enable_counter_suffix: bool,
     /// TODO Remove this field in next version and merge with `enable_recommended_naming`
     enable_unit_suffix: bool,
 }
@@ -102,6 +103,7 @@ impl PrometheusBuilder {
             recency_mask: MetricKindMask::NONE,
             global_labels: None,
             enable_recommended_naming: false,
+            enable_counter_suffix: false,
             enable_unit_suffix: false,
         }
     }
@@ -336,6 +338,15 @@ impl PrometheusBuilder {
         self
     }
 
+    /// Appends `_total` to counter names without enabling unit suffixes.
+    ///
+    /// Defaults to `false`. Recommended naming also enables this suffix.
+    #[must_use]
+    pub fn with_counter_suffix(mut self, enabled: bool) -> Self {
+        self.enable_counter_suffix = enabled;
+        self
+    }
+
     /// Sets the bucket for a specific pattern.
     ///
     /// The match pattern can be a full match (equality), prefix match, or suffix match.  The matchers are applied in
@@ -373,8 +384,9 @@ impl PrometheusBuilder {
     /// match applied to a metric, the full match would win, and if a prefix match and a suffix match applied to a
     /// metric, the prefix match would win.
     ///
-    /// Native histograms use exponential buckets and take precedence over regular histograms and summaries.
-    /// They are only supported in the protobuf format.
+    /// Native histograms use exponential buckets and are only supported in the protobuf format.
+    /// If classic buckets also match the metric, both representations are recorded; otherwise,
+    /// the native histogram replaces the default summary.
     #[must_use]
     pub fn set_native_histogram_for_metric(
         mut self,
@@ -625,7 +637,8 @@ impl PrometheusBuilder {
             descriptions_wr: Mutex::new(descriptions_wr),
             global_labels: self.global_labels.unwrap_or_default(),
             enable_unit_suffix: self.enable_recommended_naming || self.enable_unit_suffix,
-            counter_suffix: self.enable_recommended_naming.then_some("total"),
+            counter_suffix: (self.enable_recommended_naming || self.enable_counter_suffix)
+                .then_some("total"),
         };
 
         PrometheusRecorder::from(inner)
@@ -695,6 +708,22 @@ mod tests {
         let expected_histogram = format!("{expected_gauge}{histogram_data}");
 
         assert_eq!(rendered, expected_histogram);
+    }
+
+    #[test]
+    fn test_counter_suffix_without_unit_suffix() {
+        let recorder = PrometheusBuilder::new().with_counter_suffix(true).build_recorder();
+        metrics::with_local_recorder(&recorder, || {
+            metrics::describe_counter!("requests", metrics::Unit::Count, "Requests");
+            metrics::counter!("requests").increment(1);
+            metrics::counter!("already_total").increment(2);
+            metrics::describe_gauge!("size", metrics::Unit::Bytes, "Size");
+            metrics::gauge!("size").set(3.0);
+        });
+        let text = recorder.handle().render();
+        assert!(text.contains("requests_total 1"));
+        assert!(text.contains("already_total 2"));
+        assert!(text.contains("size 3"));
     }
 
     #[test]

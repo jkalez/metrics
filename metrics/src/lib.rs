@@ -283,6 +283,9 @@ mod cow;
 mod handles;
 pub use self::handles::*;
 
+mod histogram_snapshot;
+pub use self::histogram_snapshot::*;
+
 mod key;
 pub use self::key::*;
 
