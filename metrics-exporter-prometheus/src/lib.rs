@@ -82,9 +82,11 @@
 //!
 //! ## Features
 //!
-//! Three main feature flags control the capabilities of the exporter:
+//! The following feature flags control the capabilities of the exporter:
 //! - **`http-listener`**: allows running the exporter as a scrape endpoint (_enabled by default_)
 //! - **`push-gateway`**: allows running the exporter in push gateway mode (_enabled by default_)
+//! - **`histogram-snapshots`**: enables importing cumulative histogram snapshots (_disabled by default_);
+//!   exporting exponential snapshots also requires `protobuf`
 //! - **`protobuf`**: enables Prometheus protobuf format support with automatic content negotiation
 //!
 //! For the HTTP listener mode, the exporter automatically detects the requested format based on the `Accept` header:

@@ -135,6 +135,9 @@ impl Inner {
                 .entry(labels)
                 .or_insert_with(|| self.distribution_builder.get_distribution(name.as_str()));
 
+            #[cfg(feature = "histogram-snapshots")]
+            histogram.get_inner().drain_into(entry);
+            #[cfg(not(feature = "histogram-snapshots"))]
             histogram.get_inner().clear_with(|samples| entry.record_samples(samples));
         }
     }
@@ -209,12 +212,16 @@ impl Inner {
         }
 
         for (name, mut by_labels) in distributions.drain() {
-            let distribution_type = self.distribution_builder.get_distribution_type(name.as_str());
-
-            // Skip native histograms in text format - they're only supported in protobuf format
-            if distribution_type == "native_histogram" {
+            let Some(distribution_type) =
+                by_labels.values().find_map(|distribution| match distribution {
+                    Distribution::Summary(..) => Some("summary"),
+                    Distribution::Histogram(_) => Some("histogram"),
+                    Distribution::NativeHistogram(_) => None,
+                })
+            else {
+                // Skip native histograms in text format - they're only supported in protobuf format
                 continue;
-            }
+            };
 
             let unit = descriptions.get_one(name.as_str()).and_then(|entry| {
                 let (desc, unit) = &*entry;
@@ -274,7 +281,6 @@ impl Inner {
                     }
                     Distribution::NativeHistogram(_) => {
                         // Native histograms are not supported in text format
-                        // This branch should not be reached due to the continue above
                         continue;
                     }
                 };
@@ -326,6 +332,12 @@ impl Inner {
 }
 
 /// A Prometheus recorder.
+///
+/// With `histogram-snapshots` enabled, imported snapshots replace the aggregate and take precedence over
+/// individual observations on that series. Other series continue recording normally. Classic
+/// buckets are exported as supplied, independently of builder bucket configuration; snapshots
+/// without classic buckets are omitted from text output. Snapshots with unsupported exponential
+/// scales are ignored, leaving the previous aggregate unchanged. Snapshots must have valid counts.
 ///
 /// Most users will not need to interact directly with the recorder, and can simply deal with the
 /// builder methods on [`PrometheusBuilder`](crate::PrometheusBuilder) for building and installing
@@ -464,5 +476,38 @@ impl PrometheusHandle {
     /// grow unboundedly.
     pub fn run_upkeep(&self) {
         self.inner.run_upkeep();
+    }
+}
+
+#[cfg(all(test, feature = "histogram-snapshots"))]
+mod tests {
+    use crate::PrometheusBuilder;
+    use metrics::{HistogramBuckets, HistogramSnapshot};
+
+    #[test]
+    fn test_snapshots_replace_exported_histogram() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let histogram = metrics::with_local_recorder(&recorder, || metrics::histogram!("remote"));
+
+        for (count, sum) in [(5, 12.0), (5, 12.0), (1, 0.5)] {
+            histogram.set_snapshot(&HistogramSnapshot {
+                count,
+                sum,
+                buckets: HistogramBuckets::Classic(vec![(4.0, count)]),
+            });
+            let expected = format!(
+                concat!(
+                    "# TYPE remote histogram\n",
+                    "remote_bucket{{le=\"4\"}} {count}\n",
+                    "remote_bucket{{le=\"+Inf\"}} {count}\n",
+                    "remote_sum {sum}\n",
+                    "remote_count {count}\n\n",
+                ),
+                count = count,
+                sum = sum,
+            );
+            assert_eq!(handle.render(), expected);
+        }
     }
 }
