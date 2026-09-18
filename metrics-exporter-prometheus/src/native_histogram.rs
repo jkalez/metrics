@@ -46,9 +46,8 @@ fn frexp(f: f64) -> (f64, i32) {
     }
 }
 
-/// Lowest standard exponential schema in the [Prometheus specification](https://prometheus.io/docs/specs/native_histograms/#schema).
+/// Schema constants
 pub const MIN_SCHEMA: i32 = -4;
-/// Highest standard exponential schema in the [Prometheus specification](https://prometheus.io/docs/specs/native_histograms/#schema).
 pub const MAX_SCHEMA: i32 = 8;
 
 /// Native histogram bounds for different schemas (from Go implementation)

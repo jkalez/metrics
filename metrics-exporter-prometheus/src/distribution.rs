@@ -72,12 +72,8 @@ impl Distribution {
     /// Records the given `samples` in the current distribution.
     pub fn record_samples(&mut self, samples: &[(f64, Instant)]) {
         match self {
-            Distribution::Both(classic, native) => {
-                classic.record_many(samples.iter().map(|(sample, _ts)| sample));
-                for (sample, _ts) in samples {
-                    native.observe(*sample);
-                }
-            }
+            // Combined distributions are imported snapshots; they do not accept observations.
+            Distribution::Both(..) => {}
             Distribution::Histogram(hist) => {
                 hist.record_many(samples.iter().map(|(sample, _ts)| sample));
             }
@@ -154,32 +150,12 @@ impl DistributionBuilder {
     }
 
     /// Returns a distribution for the given metric key.
-    ///
-    /// # Panics
-    ///
-    /// Panics if matching classic histogram buckets are empty.
     pub fn get_distribution(&self, name: &str) -> Distribution {
         // Check for native histogram overrides first (highest priority)
         if let Some(ref overrides) = self.native_histogram_overrides {
             for (matcher, config) in overrides {
                 if matcher.matches(name) {
-                    let classic = self
-                        .bucket_overrides
-                        .as_ref()
-                        .and_then(|overrides| {
-                            overrides
-                                .iter()
-                                .find(|(matcher, _)| matcher.matches(name))
-                                .map(|(_, buckets)| buckets)
-                        })
-                        .or(self.buckets.as_ref());
-                    return match classic {
-                        Some(buckets) => Distribution::Both(
-                            Histogram::new(buckets).expect("buckets should never be empty"),
-                            NativeHistogram::new(config.clone()),
-                        ),
-                        None => Distribution::new_native_histogram(config.clone()),
-                    };
+                    return Distribution::new_native_histogram(config.clone());
                 }
             }
         }

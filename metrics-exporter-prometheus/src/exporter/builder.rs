@@ -373,9 +373,8 @@ impl PrometheusBuilder {
     /// match applied to a metric, the full match would win, and if a prefix match and a suffix match applied to a
     /// metric, the prefix match would win.
     ///
-    /// Native histograms use exponential buckets and are only supported in the protobuf format.
-    /// If classic buckets also match the metric, both representations are recorded; otherwise,
-    /// the native histogram replaces the default summary.
+    /// Native histograms use exponential buckets and take precedence over regular histograms and summaries.
+    /// They are only supported in the protobuf format.
     #[must_use]
     pub fn set_native_histogram_for_metric(
         mut self,
