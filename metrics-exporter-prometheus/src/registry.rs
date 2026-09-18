@@ -1,13 +1,20 @@
+#[cfg(feature = "histogram-snapshots")]
 use std::fmt;
+#[cfg(feature = "histogram-snapshots")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+#[cfg(feature = "histogram-snapshots")]
 use crossbeam_utils::atomic::AtomicCell;
-use metrics::{atomics::AtomicU64, HistogramBuckets, HistogramFn, HistogramSnapshot};
+use metrics::{atomics::AtomicU64, HistogramFn};
+#[cfg(feature = "histogram-snapshots")]
+use metrics::{HistogramBuckets, HistogramSnapshot};
 use metrics_util::{registry::GenerationalStorage, storage::AtomicBucket};
 use quanta::Instant;
 
+#[cfg(feature = "histogram-snapshots")]
 use crate::distribution::Distribution;
+#[cfg(feature = "histogram-snapshots")]
 use crate::native_histogram::{MAX_SCHEMA, MIN_SCHEMA};
 
 pub type GenerationalAtomicStorage = GenerationalStorage<AtomicStorage>;
@@ -19,7 +26,10 @@ pub struct AtomicStorage;
 impl<K> metrics_util::registry::Storage<K> for AtomicStorage {
     type Counter = Arc<AtomicU64>;
     type Gauge = Arc<AtomicU64>;
+    #[cfg(feature = "histogram-snapshots")]
     type Histogram = Arc<HistogramHandle>;
+    #[cfg(not(feature = "histogram-snapshots"))]
+    type Histogram = Arc<AtomicBucketInstant<f64>>;
 
     fn counter(&self, _: &K) -> Self::Counter {
         Arc::new(AtomicU64::new(0))
@@ -30,7 +40,14 @@ impl<K> metrics_util::registry::Storage<K> for AtomicStorage {
     }
 
     fn histogram(&self, _: &K) -> Self::Histogram {
-        Arc::new(HistogramHandle::new())
+        #[cfg(feature = "histogram-snapshots")]
+        {
+            Arc::new(HistogramHandle::new())
+        }
+        #[cfg(not(feature = "histogram-snapshots"))]
+        {
+            Arc::new(AtomicBucketInstant::new())
+        }
     }
 }
 
@@ -61,12 +78,14 @@ impl HistogramFn for AtomicBucketInstant<f64> {
 }
 
 /// A histogram handler that permanently switches to aggregate replacement on its first accepted snapshot.
+#[cfg(feature = "histogram-snapshots")]
 pub struct HistogramHandle {
     observations: AtomicBucketInstant<f64>,
     snapshot_mode: AtomicBool,
     snapshot: AtomicCell<Option<Box<HistogramSnapshot>>>,
 }
 
+#[cfg(feature = "histogram-snapshots")]
 impl fmt::Debug for HistogramHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HistogramHandle")
@@ -76,6 +95,7 @@ impl fmt::Debug for HistogramHandle {
     }
 }
 
+#[cfg(feature = "histogram-snapshots")]
 impl HistogramHandle {
     fn new() -> Self {
         Self {
@@ -98,6 +118,7 @@ impl HistogramHandle {
     }
 }
 
+#[cfg(feature = "histogram-snapshots")]
 impl HistogramFn for HistogramHandle {
     fn record(&self, value: f64) {
         if !self.snapshot_mode.load(Ordering::Acquire) {
@@ -120,7 +141,7 @@ impl HistogramFn for HistogramHandle {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "histogram-snapshots"))]
 mod tests {
     use super::HistogramHandle;
     use crate::distribution::Distribution;

@@ -27,7 +27,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use std::{collections::HashMap, ops::DerefMut};
 
-use metrics::{Counter, CounterFn, Gauge, GaugeFn, Histogram, HistogramFn, HistogramSnapshot};
+#[cfg(feature = "histogram-snapshots")]
+use metrics::HistogramSnapshot;
+use metrics::{Counter, CounterFn, Gauge, GaugeFn, Histogram, HistogramFn};
 use quanta::{Clock, Instant};
 
 use crate::Hashable;
@@ -125,6 +127,7 @@ where
         self.with_increment(|h| h.record(value))
     }
 
+    #[cfg(feature = "histogram-snapshots")]
     fn set_snapshot(&self, snapshot: &HistogramSnapshot) {
         self.with_increment(|h| h.set_snapshot(snapshot))
     }
@@ -351,7 +354,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "histogram-snapshots"))]
 mod tests {
     use super::Generational;
     use crate::storage::AtomicBucket;

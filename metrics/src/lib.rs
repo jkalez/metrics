@@ -283,7 +283,9 @@ mod cow;
 mod handles;
 pub use self::handles::*;
 
+#[cfg(feature = "histogram-snapshots")]
 mod histogram_snapshot;
+#[cfg(feature = "histogram-snapshots")]
 pub use self::histogram_snapshot::*;
 
 mod key;

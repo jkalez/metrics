@@ -1,6 +1,8 @@
 use std::{fmt::Debug, sync::Arc};
 
-use crate::{HistogramSnapshot, IntoF64};
+#[cfg(feature = "histogram-snapshots")]
+use crate::HistogramSnapshot;
+use crate::IntoF64;
 
 /// A counter handler.
 pub trait CounterFn {
@@ -50,6 +52,7 @@ pub trait HistogramFn {
     /// rather than add, the aggregate, including when its count decreases after a source reset.
     /// Use a separate series for individual observations; mixing snapshots with `record` or
     /// `record_many` is recorder-specific. Callers are responsible for ordering snapshots.
+    #[cfg(feature = "histogram-snapshots")]
     fn set_snapshot(&self, _snapshot: &HistogramSnapshot) {}
 }
 
@@ -188,6 +191,7 @@ impl Histogram {
     /// Replaces the histogram with a cumulative snapshot, if supported by the recorder.
     ///
     /// See [`HistogramFn::set_snapshot`] for replacement and mixed-recording semantics.
+    #[cfg(feature = "histogram-snapshots")]
     pub fn set_snapshot(&self, snapshot: &HistogramSnapshot) {
         if let Some(ref inner) = self.inner {
             inner.set_snapshot(snapshot)
@@ -232,6 +236,7 @@ where
         (**self).record(value);
     }
 
+    #[cfg(feature = "histogram-snapshots")]
     fn set_snapshot(&self, snapshot: &HistogramSnapshot) {
         (**self).set_snapshot(snapshot);
     }
@@ -264,7 +269,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "histogram-snapshots"))]
 mod tests {
     use super::{Histogram, HistogramFn, HistogramSnapshot};
     use crate::HistogramBuckets;

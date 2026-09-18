@@ -135,7 +135,10 @@ impl Inner {
                 .entry(labels)
                 .or_insert_with(|| self.distribution_builder.get_distribution(name.as_str()));
 
+            #[cfg(feature = "histogram-snapshots")]
             histogram.get_inner().drain_into(entry);
+            #[cfg(not(feature = "histogram-snapshots"))]
+            histogram.get_inner().clear_with(|samples| entry.record_samples(samples));
         }
     }
 
@@ -209,6 +212,14 @@ impl Inner {
         }
 
         for (name, mut by_labels) in distributions.drain() {
+            #[cfg(not(feature = "histogram-snapshots"))]
+            let distribution_type = self.distribution_builder.get_distribution_type(name.as_str());
+            #[cfg(not(feature = "histogram-snapshots"))]
+            if distribution_type == "native_histogram" {
+                continue;
+            }
+
+            #[cfg(feature = "histogram-snapshots")]
             let Some(distribution_type) =
                 by_labels.values().find_map(|distribution| match distribution {
                     Distribution::Summary(..) => Some("summary"),
@@ -330,7 +341,7 @@ impl Inner {
 
 /// A Prometheus recorder.
 ///
-/// Imported histogram snapshots replace the aggregate for their series and take precedence over
+/// With `histogram-snapshots` enabled, imported snapshots replace the aggregate and take precedence over
 /// individual observations on that series. Other series continue recording normally. Classic
 /// buckets are exported as supplied, independently of builder bucket configuration; snapshots
 /// without classic buckets are omitted from text output. Snapshots with unsupported exponential
@@ -476,7 +487,7 @@ impl PrometheusHandle {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "histogram-snapshots"))]
 mod tests {
     use crate::PrometheusBuilder;
     use metrics::{HistogramBuckets, HistogramSnapshot};

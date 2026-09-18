@@ -4,9 +4,11 @@
 //! to efficiently represent histogram data without requiring predefined bucket boundaries.
 
 use metrics::atomics::AtomicU64;
+#[cfg(feature = "histogram-snapshots")]
 use metrics::ExponentialHistogramSnapshot;
 use std::collections::btree_map::Entry;
 use std::sync::atomic::{AtomicI32, Ordering};
+#[cfg(feature = "histogram-snapshots")]
 use std::sync::RwLock;
 
 /// IEEE 754 frexp implementation matching Go's math.Frexp behavior.
@@ -714,6 +716,7 @@ impl NativeHistogram {
     }
 
     /// Imports an aggregate without applying recording-time bucket limits.
+    #[cfg(feature = "histogram-snapshots")]
     pub fn from_buckets(snapshot: ExponentialHistogramSnapshot, count: u64, sum: f64) -> Self {
         Self {
             config: NativeHistogramConfig {
@@ -1085,6 +1088,7 @@ mod tests {
         assert_eq!(histogram.schema(), 0); // 2.0 -> schema 0
     }
 
+    #[cfg(feature = "histogram-snapshots")]
     #[test]
     fn test_from_buckets() {
         let buckets = ExponentialHistogramSnapshot {

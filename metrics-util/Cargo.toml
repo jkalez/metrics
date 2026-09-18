@@ -81,6 +81,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["fmt", "ansi"] }
 
 [features]
+histogram-snapshots = ["metrics/histogram-snapshots"]
 default = ["debugging", "layers", "recency", "registry", "storage"]
 debugging = ["indexmap", "ordered-float", "registry"]
 layers = ["layer-filter", "layer-router"]

@@ -2,6 +2,7 @@ use std::num::NonZeroU32;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
+#[cfg(feature = "histogram-snapshots")]
 use metrics::{HistogramBuckets, HistogramSnapshot};
 use quanta::Instant;
 
@@ -88,6 +89,7 @@ impl Distribution {
     }
 }
 
+#[cfg(feature = "histogram-snapshots")]
 impl From<HistogramSnapshot> for Distribution {
     fn from(snapshot: HistogramSnapshot) -> Self {
         let HistogramSnapshot { count, sum, buckets } = snapshot;

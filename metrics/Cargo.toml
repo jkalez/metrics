@@ -22,6 +22,9 @@ bench = false
 name = "macros"
 harness = false
 
+[features]
+histogram-snapshots = []
+
 [dependencies]
 rapidhash = { workspace = true }
 
