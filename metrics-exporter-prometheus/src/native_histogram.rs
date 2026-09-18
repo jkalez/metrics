@@ -714,7 +714,7 @@ impl NativeHistogram {
     }
 
     /// Imports an aggregate without applying recording-time bucket limits.
-    pub fn from_snapshot(snapshot: ExponentialHistogramSnapshot, count: u64, sum: f64) -> Self {
+    pub fn from_buckets(snapshot: ExponentialHistogramSnapshot, count: u64, sum: f64) -> Self {
         Self {
             config: NativeHistogramConfig {
                 bucket_factor: 2.0_f64.powf(2.0_f64.powi(-snapshot.scale)),

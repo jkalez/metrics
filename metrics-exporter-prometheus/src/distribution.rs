@@ -96,7 +96,7 @@ impl From<HistogramSnapshot> for Distribution {
                 Self::Histogram(Histogram::from_buckets(classic, count, sum))
             }
             HistogramBuckets::Exponential(exponential) => {
-                Self::NativeHistogram(NativeHistogram::from_snapshot(exponential, count, sum))
+                Self::NativeHistogram(NativeHistogram::from_buckets(exponential, count, sum))
             }
         }
     }
