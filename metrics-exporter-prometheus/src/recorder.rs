@@ -6,6 +6,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::{Mutex, PoisonError, RwLock};
 
+use cfg_if::cfg_if;
 use indexmap::IndexMap;
 use metrics::{Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit};
 use metrics_util::registry::{Recency, Registry};
@@ -135,10 +136,13 @@ impl Inner {
                 .entry(labels)
                 .or_insert_with(|| self.distribution_builder.get_distribution(name.as_str()));
 
-            #[cfg(feature = "histogram-snapshots")]
-            histogram.get_inner().drain_into(entry);
-            #[cfg(not(feature = "histogram-snapshots"))]
-            histogram.get_inner().clear_with(|samples| entry.record_samples(samples));
+            cfg_if! {
+                if #[cfg(feature = "histogram-snapshots")] {
+                    histogram.get_inner().drain_into(entry);
+                } else {
+                    histogram.get_inner().clear_with(|samples| entry.record_samples(samples));
+                }
+            }
         }
     }
 
@@ -212,24 +216,26 @@ impl Inner {
         }
 
         for (name, mut by_labels) in distributions.drain() {
-            #[cfg(not(feature = "histogram-snapshots"))]
-            let distribution_type = self.distribution_builder.get_distribution_type(name.as_str());
-            #[cfg(not(feature = "histogram-snapshots"))]
-            if distribution_type == "native_histogram" {
-                continue;
+            cfg_if! {
+                if #[cfg(feature = "histogram-snapshots")] {
+                    let Some(distribution_type) =
+                        by_labels.values().find_map(|distribution| match distribution {
+                            Distribution::Summary(..) => Some("summary"),
+                            Distribution::Histogram(_) => Some("histogram"),
+                            Distribution::NativeHistogram(_) => None,
+                        })
+                    else {
+                        // Skip native histograms in text format - they're only supported in protobuf format
+                        continue;
+                    };
+                } else {
+                    let distribution_type =
+                        self.distribution_builder.get_distribution_type(name.as_str());
+                    if distribution_type == "native_histogram" {
+                        continue;
+                    }
+                }
             }
-
-            #[cfg(feature = "histogram-snapshots")]
-            let Some(distribution_type) =
-                by_labels.values().find_map(|distribution| match distribution {
-                    Distribution::Summary(..) => Some("summary"),
-                    Distribution::Histogram(_) => Some("histogram"),
-                    Distribution::NativeHistogram(_) => None,
-                })
-            else {
-                // Skip native histograms in text format - they're only supported in protobuf format
-                continue;
-            };
 
             let unit = descriptions.get_one(name.as_str()).and_then(|entry| {
                 let (desc, unit) = &*entry;

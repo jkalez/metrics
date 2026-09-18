@@ -43,6 +43,7 @@ _hyper-client = [
 [dependencies]
 arc-swap = { workspace = true, optional = true }
 base64 = { workspace = true }
+cfg-if = { workspace = true }
 quanta = { workspace = true }
 thiserror = { workspace = true }
 evmap = { workspace = true }
