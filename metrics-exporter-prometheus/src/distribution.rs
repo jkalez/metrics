@@ -2,8 +2,6 @@ use std::num::NonZeroU32;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
-#[cfg(feature = "histogram-snapshots")]
-use metrics::{HistogramBuckets, HistogramSnapshot};
 use quanta::Instant;
 
 use crate::common::Matcher;
@@ -90,15 +88,23 @@ impl Distribution {
 }
 
 #[cfg(feature = "histogram-snapshots")]
-impl From<HistogramSnapshot> for Distribution {
-    fn from(snapshot: HistogramSnapshot) -> Self {
-        let HistogramSnapshot { count, sum, buckets } = snapshot;
-        match buckets {
-            HistogramBuckets::Classic(classic) => {
-                Self::Histogram(Histogram::from_buckets(classic, count, sum))
-            }
-            HistogramBuckets::Exponential(exponential) => {
-                Self::NativeHistogram(NativeHistogram::from_buckets(exponential, count, sum))
+mod snapshot {
+    use metrics::{HistogramBuckets, HistogramSnapshot};
+    use metrics_util::storage::Histogram;
+
+    use super::Distribution;
+    use crate::native_histogram::NativeHistogram;
+
+    impl From<HistogramSnapshot> for Distribution {
+        fn from(snapshot: HistogramSnapshot) -> Self {
+            let HistogramSnapshot { count, sum, buckets } = snapshot;
+            match buckets {
+                HistogramBuckets::Classic(classic) => {
+                    Self::Histogram(Histogram::from_buckets(classic, count, sum))
+                }
+                HistogramBuckets::Exponential(exponential) => {
+                    Self::NativeHistogram(NativeHistogram::from_buckets(exponential, count, sum))
+                }
             }
         }
     }

@@ -4,12 +4,8 @@
 //! to efficiently represent histogram data without requiring predefined bucket boundaries.
 
 use metrics::atomics::AtomicU64;
-#[cfg(feature = "histogram-snapshots")]
-use metrics::ExponentialHistogramSnapshot;
 use std::collections::btree_map::Entry;
 use std::sync::atomic::{AtomicI32, Ordering};
-#[cfg(feature = "histogram-snapshots")]
-use std::sync::RwLock;
 
 /// IEEE 754 frexp implementation matching Go's math.Frexp behavior.
 /// Returns (mantissa, exponent) such that f = mantissa × 2^exponent,
@@ -715,27 +711,6 @@ impl NativeHistogram {
         }
     }
 
-    /// Imports an aggregate without applying recording-time bucket limits.
-    #[cfg(feature = "histogram-snapshots")]
-    pub fn from_buckets(snapshot: ExponentialHistogramSnapshot, count: u64, sum: f64) -> Self {
-        Self {
-            config: NativeHistogramConfig {
-                bucket_factor: 2.0_f64.powf(2.0_f64.powi(-snapshot.scale)),
-                max_buckets: u32::MAX,
-                zero_threshold: snapshot.zero_threshold,
-            },
-            count: AtomicU64::new(count),
-            sum: AtomicU64::new(sum.to_bits()),
-            zero_count: AtomicU64::new(snapshot.zero_count),
-            schema: AtomicI32::new(snapshot.scale),
-            bucket_count: AtomicU64::new(
-                (snapshot.positive.len() + snapshot.negative.len()) as u64,
-            ),
-            positive_buckets: RwLock::new(snapshot.positive),
-            negative_buckets: RwLock::new(snapshot.negative),
-        }
-    }
-
     /// Records a single observation.
     pub(crate) fn observe(&self, value: f64) {
         self.count.fetch_add(1, Ordering::Relaxed);
@@ -996,6 +971,65 @@ impl Clone for NativeHistogram {
     }
 }
 
+#[cfg(feature = "histogram-snapshots")]
+mod snapshot {
+    use std::sync::atomic::AtomicI32;
+    use std::sync::RwLock;
+
+    use metrics::{atomics::AtomicU64, ExponentialHistogramSnapshot};
+
+    use super::{NativeHistogram, NativeHistogramConfig};
+
+    impl NativeHistogram {
+        /// Imports an aggregate without applying recording-time bucket limits.
+        pub fn from_buckets(snapshot: ExponentialHistogramSnapshot, count: u64, sum: f64) -> Self {
+            Self {
+                config: NativeHistogramConfig {
+                    bucket_factor: 2.0_f64.powf(2.0_f64.powi(-snapshot.scale)),
+                    max_buckets: u32::MAX,
+                    zero_threshold: snapshot.zero_threshold,
+                },
+                count: AtomicU64::new(count),
+                sum: AtomicU64::new(sum.to_bits()),
+                zero_count: AtomicU64::new(snapshot.zero_count),
+                schema: AtomicI32::new(snapshot.scale),
+                bucket_count: AtomicU64::new(
+                    (snapshot.positive.len() + snapshot.negative.len()) as u64,
+                ),
+                positive_buckets: RwLock::new(snapshot.positive),
+                negative_buckets: RwLock::new(snapshot.negative),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_from_buckets_preserves_aggregate() {
+            let buckets = ExponentialHistogramSnapshot {
+                scale: 1,
+                zero_threshold: 0.125,
+                zero_count: 1,
+                positive: [(1, 3)].into(),
+                negative: [(0, 2)].into(),
+            };
+            let histogram = NativeHistogram::from_buckets(buckets.clone(), 6, 2.0);
+
+            assert_eq!(histogram.count(), 6);
+            assert!((histogram.sum() - 2.0).abs() < f64::EPSILON);
+            assert_eq!(histogram.schema(), buckets.scale);
+            assert!(
+                (histogram.config.zero_threshold() - buckets.zero_threshold).abs() < f64::EPSILON
+            );
+            assert_eq!(histogram.zero_count(), buckets.zero_count);
+            assert_eq!(histogram.positive_buckets(), buckets.positive);
+            assert_eq!(histogram.negative_buckets(), buckets.negative);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1086,27 +1120,6 @@ mod tests {
         assert!((histogram.sum() - 0.0).abs() < f64::EPSILON);
         assert_eq!(histogram.zero_count(), 0);
         assert_eq!(histogram.schema(), 0); // 2.0 -> schema 0
-    }
-
-    #[cfg(feature = "histogram-snapshots")]
-    #[test]
-    fn test_from_buckets_preserves_aggregate() {
-        let buckets = ExponentialHistogramSnapshot {
-            scale: 1,
-            zero_threshold: 0.125,
-            zero_count: 1,
-            positive: [(1, 3)].into(),
-            negative: [(0, 2)].into(),
-        };
-        let histogram = NativeHistogram::from_buckets(buckets.clone(), 6, 2.0);
-
-        assert_eq!(histogram.count(), 6);
-        assert!((histogram.sum() - 2.0).abs() < f64::EPSILON);
-        assert_eq!(histogram.schema(), buckets.scale);
-        assert!((histogram.config.zero_threshold() - buckets.zero_threshold).abs() < f64::EPSILON);
-        assert_eq!(histogram.zero_count(), buckets.zero_count);
-        assert_eq!(histogram.positive_buckets(), buckets.positive);
-        assert_eq!(histogram.negative_buckets(), buckets.negative);
     }
 
     #[test]
