@@ -1,11 +1,7 @@
-#[cfg(feature = "histogram-snapshots")]
-use std::fmt;
-#[cfg(feature = "histogram-snapshots")]
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 #[cfg(feature = "histogram-snapshots")]
-use crossbeam_utils::atomic::AtomicCell;
+use arc_swap::ArcSwap;
 use metrics::{atomics::AtomicU64, HistogramFn};
 #[cfg(feature = "histogram-snapshots")]
 use metrics::{HistogramBuckets, HistogramSnapshot};
@@ -79,41 +75,50 @@ impl HistogramFn for AtomicBucketInstant<f64> {
 
 /// A histogram handler that permanently switches to aggregate replacement on its first accepted snapshot.
 #[cfg(feature = "histogram-snapshots")]
+#[derive(Debug)]
 pub struct HistogramHandle {
-    observations: AtomicBucketInstant<f64>,
-    snapshot_mode: AtomicBool,
-    snapshot: AtomicCell<Option<Box<HistogramSnapshot>>>,
+    state: ArcSwap<HistogramState>,
 }
 
 #[cfg(feature = "histogram-snapshots")]
-impl fmt::Debug for HistogramHandle {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("HistogramHandle")
-            .field("observations", &self.observations)
-            .field("snapshot_mode", &self.snapshot_mode)
-            .finish_non_exhaustive()
-    }
+#[derive(Debug)]
+enum HistogramState {
+    Observations(AtomicBucketInstant<f64>),
+    Snapshot(Option<HistogramSnapshot>),
 }
 
 #[cfg(feature = "histogram-snapshots")]
 impl HistogramHandle {
     fn new() -> Self {
         Self {
-            observations: AtomicBucketInstant::new(),
-            snapshot_mode: AtomicBool::new(false),
-            snapshot: AtomicCell::new(None),
+            state: ArcSwap::from_pointee(HistogramState::Observations(AtomicBucketInstant::new())),
         }
     }
 
     pub fn drain_into(&self, distribution: &mut Distribution) {
-        // The recorder serializes drains, so an observation drain cannot outlive snapshot replacement.
-        if self.snapshot_mode.load(Ordering::Acquire) {
-            self.observations.clear_with(|_| {});
-            if let Some(snapshot) = self.snapshot.take() {
-                *distribution = (*snapshot).into();
+        let state = self.state.load();
+        match &**state {
+            HistogramState::Observations(observations) => {
+                observations.clear_with(|samples| distribution.record_samples(samples));
             }
-        } else {
-            self.observations.clear_with(|samples| distribution.record_samples(samples));
+            HistogramState::Snapshot(Some(_)) => {
+                // Release our reader so the consumed snapshot can be moved without cloning.
+                drop(state);
+                // Snapshot mode is permanent, so this cannot replace an observation buffer.
+                let previous = self.state.swap(Arc::new(HistogramState::Snapshot(None)));
+                match Arc::try_unwrap(previous) {
+                    Ok(HistogramState::Snapshot(Some(snapshot))) => {
+                        *distribution = snapshot.into();
+                    }
+                    Err(previous) => {
+                        if let HistogramState::Snapshot(Some(snapshot)) = &*previous {
+                            *distribution = snapshot.clone().into();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            HistogramState::Snapshot(None) => {}
         }
     }
 }
@@ -121,8 +126,8 @@ impl HistogramHandle {
 #[cfg(feature = "histogram-snapshots")]
 impl HistogramFn for HistogramHandle {
     fn record(&self, value: f64) {
-        if !self.snapshot_mode.load(Ordering::Acquire) {
-            self.observations.record(value);
+        if let HistogramState::Observations(observations) = &**self.state.load() {
+            observations.record(value);
         }
     }
 
@@ -134,30 +139,44 @@ impl HistogramFn for HistogramHandle {
                 return;
             }
         }
-        let snapshot = Box::new(snapshot.clone());
-        // Disable observation drains before the snapshot can be consumed.
-        self.snapshot_mode.store(true, Ordering::Release);
-        self.snapshot.store(Some(snapshot));
+        self.state.store(Arc::new(HistogramState::Snapshot(Some(snapshot.clone()))));
     }
 }
 
 #[cfg(all(test, feature = "histogram-snapshots"))]
 mod tests {
-    use super::HistogramHandle;
+    use super::{HistogramHandle, HistogramState};
     use crate::distribution::Distribution;
-    use crossbeam_utils::atomic::AtomicCell;
     use metrics::{HistogramBuckets, HistogramFn, HistogramSnapshot};
 
     #[test]
-    fn test_snapshot_cell_is_lock_free() {
-        assert!(AtomicCell::<Option<Box<HistogramSnapshot>>>::is_lock_free());
+    fn test_snapshot_drains_while_reader_holds_state() {
+        let handler = HistogramHandle::new();
+        handler.set_snapshot(&HistogramSnapshot {
+            count: 1,
+            sum: 1.0,
+            buckets: HistogramBuckets::Classic(vec![(2.0, 1)]),
+        });
+        let reader = handler.state.load_full();
+        let mut distribution = Distribution::new_histogram(&[2.0]);
+        handler.drain_into(&mut distribution);
+        drop(reader);
+
+        let Distribution::Histogram(histogram) = distribution else {
+            panic!("expected classic histogram");
+        };
+        assert_eq!(histogram.count(), 1);
+        assert_eq!(histogram.sum().to_bits(), 1.0_f64.to_bits());
     }
 
     #[test]
     fn test_in_flight_observation_cannot_modify_imported_snapshot() {
         let handler = HistogramHandle::new();
-        // Simulate a record call that passed the mode check before snapshot publication.
-        let observations = &handler.observations;
+        // Keep the state loaded by a record call that began before the mode switch.
+        let in_flight = handler.state.load();
+        let HistogramState::Observations(observations) = &**in_flight else {
+            panic!("expected observation mode");
+        };
         handler.set_snapshot(&HistogramSnapshot {
             count: 1,
             sum: 1.0,

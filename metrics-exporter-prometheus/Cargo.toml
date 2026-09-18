@@ -16,7 +16,7 @@ categories = ["development-tools::debugging"]
 keywords = ["metrics", "telemetry", "prometheus"]
 
 [features]
-histogram-snapshots = ["metrics/histogram-snapshots", "metrics-util/histogram-snapshots", "dep:crossbeam-utils"]
+histogram-snapshots = ["metrics/histogram-snapshots", "metrics-util/histogram-snapshots", "dep:arc-swap"]
 default = ["http-listener", "push-gateway"]
 async-runtime = ["tokio", "hyper-util/tokio"]
 http-listener = ["async-runtime", "ipnet", "tracing", "_hyper-server"]
@@ -41,7 +41,7 @@ _hyper-client = [
 ]
 
 [dependencies]
-crossbeam-utils = { workspace = true, features = ["std"], optional = true }
+arc-swap = { workspace = true, optional = true }
 base64 = { workspace = true }
 quanta = { workspace = true }
 thiserror = { workspace = true }
