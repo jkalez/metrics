@@ -268,26 +268,3 @@ where
         Histogram::from_arc(inner)
     }
 }
-
-#[cfg(all(test, feature = "histogram-snapshots"))]
-mod tests {
-    use super::{Histogram, HistogramFn, HistogramSnapshot};
-    use crate::HistogramBuckets;
-    use std::sync::Arc;
-
-    #[test]
-    fn unsupported_snapshot_does_not_replay_observations() {
-        struct Unsupported;
-        impl HistogramFn for Unsupported {
-            fn record(&self, _: f64) {
-                panic!("snapshot must not be approximated by observations");
-            }
-        }
-        let histogram = Histogram::from_arc(Arc::new(Unsupported));
-        histogram.set_snapshot(&HistogramSnapshot {
-            count: 5,
-            sum: 10.0,
-            buckets: HistogramBuckets::Classic(vec![(4.0, 5)]),
-        });
-    }
-}

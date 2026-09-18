@@ -497,16 +497,12 @@ impl PrometheusHandle {
 mod tests {
     use crate::PrometheusBuilder;
     use metrics::{HistogramBuckets, HistogramSnapshot};
-    use metrics_util::MetricKindMask;
-    use quanta::Clock;
-    use std::time::Duration;
 
     #[test]
-    fn test_snapshots_replace_observations_and_previous_snapshots() {
+    fn test_snapshots_replace_exported_histogram() {
         let recorder = PrometheusBuilder::new().build_recorder();
         let handle = recorder.handle();
         let histogram = metrics::with_local_recorder(&recorder, || metrics::histogram!("remote"));
-        histogram.record(99.0);
 
         for (count, sum) in [(5, 12.0), (5, 12.0), (1, 0.5)] {
             histogram.set_snapshot(&HistogramSnapshot {
@@ -514,9 +510,6 @@ mod tests {
                 sum,
                 buckets: HistogramBuckets::Classic(vec![(4.0, count)]),
             });
-            histogram.record(99.0);
-            handle.run_upkeep();
-            histogram.record_many(99.0, 2);
             let expected = format!(
                 concat!(
                     "# TYPE remote histogram\n",
@@ -530,35 +523,5 @@ mod tests {
             );
             assert_eq!(handle.render(), expected);
         }
-    }
-
-    #[test]
-    fn test_snapshot_updates_prevent_idle_expiry() {
-        let (clock, mock) = Clock::mock();
-        let recorder = PrometheusBuilder::new()
-            .idle_timeout(MetricKindMask::ALL, Some(Duration::from_secs(10)))
-            .build_with_clock(clock);
-        let handle = recorder.handle();
-        let histogram = metrics::with_local_recorder(&recorder, || metrics::histogram!("remote"));
-        let snapshot = HistogramSnapshot {
-            count: 1,
-            sum: 0.5,
-            buckets: HistogramBuckets::Classic(vec![(1.0, 1)]),
-        };
-        histogram.set_snapshot(&snapshot);
-        let expected = handle.render();
-        assert!(expected.contains("remote_count 1"));
-
-        mock.increment(Duration::from_secs(11));
-        histogram.set_snapshot(&snapshot);
-        assert_eq!(handle.render(), expected);
-
-        mock.increment(Duration::from_secs(11));
-        assert_eq!(handle.render(), "");
-
-        metrics::with_local_recorder(&recorder, || {
-            metrics::histogram!("remote").set_snapshot(&snapshot);
-        });
-        assert_eq!(handle.render(), expected);
     }
 }

@@ -1090,7 +1090,7 @@ mod tests {
 
     #[cfg(feature = "histogram-snapshots")]
     #[test]
-    fn test_from_buckets() {
+    fn test_from_buckets_preserves_aggregate() {
         let buckets = ExponentialHistogramSnapshot {
             scale: 1,
             zero_threshold: 0.125,
