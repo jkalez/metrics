@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 
 /// A cumulative histogram aggregate, suitable for re-emitting measurements collected elsewhere.
 ///
-/// Classic and exponential buckets, when both present, must describe the same observations.
 /// All series sharing a metric name should use the same representation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HistogramSnapshot {
@@ -21,13 +20,6 @@ pub enum HistogramBuckets {
     Classic(ClassicHistogramSnapshot),
     /// Exponential buckets only.
     Exponential(ExponentialHistogramSnapshot),
-    /// Both representations of the same observations.
-    Both {
-        /// Classic upper bounds and cumulative counts.
-        classic: ClassicHistogramSnapshot,
-        /// Exponential buckets.
-        exponential: ExponentialHistogramSnapshot,
-    },
 }
 
 /// Classic buckets as `(upper_bound, cumulative_count)` pairs.

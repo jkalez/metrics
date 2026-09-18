@@ -212,7 +212,7 @@ impl Inner {
             let Some(distribution_type) =
                 by_labels.values().find_map(|distribution| match distribution {
                     Distribution::Summary(..) => Some("summary"),
-                    Distribution::Histogram(_) | Distribution::Both(..) => Some("histogram"),
+                    Distribution::Histogram(_) => Some("histogram"),
                     Distribution::NativeHistogram(_) => None,
                 })
             else {
@@ -252,7 +252,7 @@ impl Inner {
 
                         (sum, summary.count() as u64)
                     }
-                    Distribution::Histogram(histogram) | Distribution::Both(histogram, _) => {
+                    Distribution::Histogram(histogram) => {
                         for (le, count) in histogram.buckets() {
                             write_metric_line(
                                 &mut intermediate,

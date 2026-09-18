@@ -39,8 +39,6 @@ pub enum Distribution {
     /// Uses exponential buckets to efficiently represent histogram data without
     /// requiring predefined bucket boundaries.
     NativeHistogram(NativeHistogram),
-    /// Classic and native histograms representing the same observations.
-    Both(Histogram, NativeHistogram),
 }
 
 impl Distribution {
@@ -72,8 +70,6 @@ impl Distribution {
     /// Records the given `samples` in the current distribution.
     pub fn record_samples(&mut self, samples: &[(f64, Instant)]) {
         match self {
-            // Combined distributions are imported snapshots; they do not accept observations.
-            Distribution::Both(..) => {}
             Distribution::Histogram(hist) => {
                 hist.record_many(samples.iter().map(|(sample, _ts)| sample));
             }
@@ -102,10 +98,6 @@ impl From<HistogramSnapshot> for Distribution {
             HistogramBuckets::Exponential(exponential) => {
                 Self::NativeHistogram(NativeHistogram::from_snapshot(exponential, count, sum))
             }
-            HistogramBuckets::Both { classic, exponential } => Self::Both(
-                Histogram::from_buckets(classic, count, sum),
-                NativeHistogram::from_snapshot(exponential, count, sum),
-            ),
         }
     }
 }

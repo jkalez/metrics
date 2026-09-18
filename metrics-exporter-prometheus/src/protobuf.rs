@@ -142,22 +142,6 @@ pub(crate) fn render_protobuf_to_write<W: Write>(
         for (labels, distribution) in by_labels {
             let label_pairs = label_set_to_protobuf(labels);
 
-            let classic = match &distribution {
-                Distribution::Both(classic, _) => Some(
-                    classic
-                        .buckets()
-                        .into_iter()
-                        .chain(std::iter::once((f64::INFINITY, classic.count())))
-                        .map(|(le, count)| pb::Bucket {
-                            cumulative_count: Some(count),
-                            upper_bound: Some(le),
-                            ..Default::default()
-                        })
-                        .collect(),
-                ),
-                _ => None,
-            };
-
             let metric = match distribution {
                 Distribution::Summary(summary, quantiles, sum) => {
                     use quanta::Instant;
@@ -216,7 +200,7 @@ pub(crate) fn render_protobuf_to_write<W: Write>(
                         ..Default::default()
                     }
                 }
-                Distribution::NativeHistogram(native_hist) | Distribution::Both(_, native_hist) => {
+                Distribution::NativeHistogram(native_hist) => {
                     metric_type = Some(pb::MetricType::Histogram);
                     // Convert our native histogram into Prometheus native histogram format
                     let positive_buckets = native_hist.positive_buckets();
@@ -256,10 +240,6 @@ pub(crate) fn render_protobuf_to_write<W: Write>(
                     {
                         histogram.positive_span =
                             vec![pb::BucketSpan { offset: Some(0), length: Some(0) }];
-                    }
-
-                    if let Some(classic) = classic {
-                        histogram.bucket = classic;
                     }
 
                     pb::Metric {
@@ -376,23 +356,20 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn test_imported_histogram_preserves_both_representations() {
+    fn test_imported_exponential_histogram() {
         let recorder = PrometheusBuilder::new().build_recorder();
         let handle = recorder.handle();
         let histogram = metrics::with_local_recorder(&recorder, || metrics::histogram!("remote"));
         let snapshot = HistogramSnapshot {
             count: 6,
             sum: 2.0,
-            buckets: HistogramBuckets::Both {
-                classic: vec![(-1.0, 2), (0.0, 3), (2.0, 6)],
-                exponential: ExponentialHistogramSnapshot {
-                    scale: 1,
-                    zero_threshold: 0.125,
-                    zero_count: 1,
-                    positive: [(1, 3)].into(),
-                    negative: [(0, 2)].into(),
-                },
-            },
+            buckets: HistogramBuckets::Exponential(ExponentialHistogramSnapshot {
+                scale: 1,
+                zero_threshold: 0.125,
+                zero_count: 1,
+                positive: [(1, 3)].into(),
+                negative: [(0, 2)].into(),
+            }),
         };
         histogram.set_snapshot(&snapshot);
         let bytes = handle.render_protobuf();
@@ -401,15 +378,7 @@ mod tests {
         let actual = family.metric[0].histogram.as_ref().unwrap();
         assert_eq!(actual.sample_count, Some(6));
         assert_eq!(actual.sample_sum, Some(2.0));
-        assert_eq!(
-            actual.bucket.iter().map(|b| (b.upper_bound, b.cumulative_count)).collect::<Vec<_>>(),
-            vec![
-                (Some(-1.0), Some(2)),
-                (Some(0.0), Some(3)),
-                (Some(2.0), Some(6)),
-                (Some(f64::INFINITY), Some(6))
-            ]
-        );
+        assert!(actual.bucket.is_empty());
         assert_eq!(actual.schema, Some(1));
         assert_eq!(actual.zero_count, Some(1));
         assert_eq!(actual.zero_threshold, Some(0.125));

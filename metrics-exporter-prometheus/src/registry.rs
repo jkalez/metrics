@@ -102,12 +102,10 @@ impl HistogramFn for HistogramHandle {
         }
     }
 
-    /// Ignores the entire snapshot if its exponential scale is unsupported, including `Both`.
+    /// Ignores snapshots with an unsupported exponential scale.
     /// Changing the scale alone would reinterpret bucket boundaries without rebucketing counts.
     fn set_snapshot(&self, snapshot: &HistogramSnapshot) {
-        if let HistogramBuckets::Exponential(exponential)
-        | HistogramBuckets::Both { exponential, .. } = &snapshot.buckets
-        {
+        if let HistogramBuckets::Exponential(exponential) = &snapshot.buckets {
             if !(MIN_SCHEMA..=MAX_SCHEMA).contains(&exponential.scale) {
                 return;
             }
