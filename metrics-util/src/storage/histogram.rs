@@ -29,6 +29,15 @@ impl Histogram {
         Some(Histogram { count: 0, bounds: Vec::from(bounds), buckets, sum: 0.0 })
     }
 
+    /// Creates a histogram from cumulative buckets and their total count and sum.
+    ///
+    /// Bounds must be finite and strictly increasing. Bucket counts must be nondecreasing
+    /// and at most `count`, which also includes observations above the largest bound.
+    pub fn from_buckets(buckets: Vec<(f64, u64)>, count: u64, sum: f64) -> Self {
+        let (bounds, buckets) = buckets.into_iter().unzip();
+        Self { count, bounds, buckets, sum }
+    }
+
     /// Gets the sum of all samples.
     pub fn sum(&self) -> f64 {
         self.sum

@@ -27,6 +27,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use std::{collections::HashMap, ops::DerefMut};
 
+#[cfg(feature = "histogram-snapshots")]
+use metrics::HistogramSnapshot;
 use metrics::{Counter, CounterFn, Gauge, GaugeFn, Histogram, HistogramFn};
 use quanta::{Clock, Instant};
 
@@ -123,6 +125,11 @@ where
 {
     fn record(&self, value: f64) {
         self.with_increment(|h| h.record(value))
+    }
+
+    #[cfg(feature = "histogram-snapshots")]
+    fn set_snapshot(&self, snapshot: &HistogramSnapshot) {
+        self.with_increment(|h| h.set_snapshot(snapshot))
     }
 }
 
@@ -344,5 +351,24 @@ where
         }
 
         true
+    }
+}
+
+#[cfg(all(test, feature = "histogram-snapshots"))]
+mod tests {
+    use super::Generational;
+    use crate::storage::AtomicBucket;
+    use metrics::{HistogramBuckets, HistogramFn, HistogramSnapshot};
+
+    #[test]
+    fn test_snapshot_advances_generation() {
+        let histogram = Generational::new(AtomicBucket::<f64>::new());
+        let previous = histogram.get_generation();
+        histogram.set_snapshot(&HistogramSnapshot {
+            count: 0,
+            sum: 0.0,
+            buckets: HistogramBuckets::Classic(Vec::new()),
+        });
+        assert!(histogram.get_generation() > previous);
     }
 }

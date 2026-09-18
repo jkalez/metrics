@@ -1,5 +1,7 @@
 use std::{fmt, sync::Arc};
 
+#[cfg(feature = "histogram-snapshots")]
+use metrics::HistogramSnapshot;
 use metrics::{
     Counter, CounterFn, Gauge, GaugeFn, Histogram, HistogramFn, Key, KeyName, Metadata, Recorder,
     SharedString, Unit,
@@ -88,6 +90,13 @@ impl HistogramFn for FanoutHistogram {
     fn record(&self, value: f64) {
         for histogram in &self.histograms {
             histogram.record(value);
+        }
+    }
+
+    #[cfg(feature = "histogram-snapshots")]
+    fn set_snapshot(&self, snapshot: &HistogramSnapshot) {
+        for histogram in &self.histograms {
+            histogram.set_snapshot(snapshot);
         }
     }
 }

@@ -87,6 +87,29 @@ impl Distribution {
     }
 }
 
+#[cfg(feature = "histogram-snapshots")]
+mod snapshot {
+    use metrics::{HistogramBuckets, HistogramSnapshot};
+    use metrics_util::storage::Histogram;
+
+    use super::Distribution;
+    use crate::native_histogram::NativeHistogram;
+
+    impl From<HistogramSnapshot> for Distribution {
+        fn from(snapshot: HistogramSnapshot) -> Self {
+            let HistogramSnapshot { count, sum, buckets } = snapshot;
+            match buckets {
+                HistogramBuckets::Classic(classic) => {
+                    Self::Histogram(Histogram::from_buckets(classic, count, sum))
+                }
+                HistogramBuckets::Exponential(exponential) => {
+                    Self::NativeHistogram(NativeHistogram::from_buckets(exponential, count, sum))
+                }
+            }
+        }
+    }
+}
+
 /// Builds distributions for metric names based on a set of configured overrides.
 #[derive(Debug)]
 pub struct DistributionBuilder {
