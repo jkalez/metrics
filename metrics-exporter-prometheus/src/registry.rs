@@ -1,18 +1,17 @@
 use std::sync::Arc;
 
-use cfg_if::cfg_if;
+#[cfg(feature = "histogram-snapshots")]
+use arc_swap::ArcSwap;
 use metrics::{atomics::AtomicU64, HistogramFn};
+#[cfg(feature = "histogram-snapshots")]
+use metrics::{HistogramBuckets, HistogramSnapshot};
 use metrics_util::{registry::GenerationalStorage, storage::AtomicBucket};
 use quanta::Instant;
 
-cfg_if! {
-    if #[cfg(feature = "histogram-snapshots")] {
-        use arc_swap::ArcSwap;
-        use metrics::{HistogramBuckets, HistogramSnapshot};
-        use crate::distribution::Distribution;
-        use crate::native_histogram::{MAX_SCHEMA, MIN_SCHEMA};
-    }
-}
+#[cfg(feature = "histogram-snapshots")]
+use crate::distribution::Distribution;
+#[cfg(feature = "histogram-snapshots")]
+use crate::native_histogram::{MAX_SCHEMA, MIN_SCHEMA};
 
 pub type GenerationalAtomicStorage = GenerationalStorage<AtomicStorage>;
 
@@ -23,13 +22,10 @@ pub struct AtomicStorage;
 impl<K> metrics_util::registry::Storage<K> for AtomicStorage {
     type Counter = Arc<AtomicU64>;
     type Gauge = Arc<AtomicU64>;
-    cfg_if! {
-        if #[cfg(feature = "histogram-snapshots")] {
-            type Histogram = Arc<HistogramHandle>;
-        } else {
-            type Histogram = Arc<AtomicBucketInstant<f64>>;
-        }
-    }
+    #[cfg(feature = "histogram-snapshots")]
+    type Histogram = Arc<HistogramHandle>;
+    #[cfg(not(feature = "histogram-snapshots"))]
+    type Histogram = Arc<AtomicBucketInstant<f64>>;
 
     fn counter(&self, _: &K) -> Self::Counter {
         Arc::new(AtomicU64::new(0))
@@ -40,14 +36,14 @@ impl<K> metrics_util::registry::Storage<K> for AtomicStorage {
     }
 
     fn histogram(&self, _: &K) -> Self::Histogram {
-        cfg_if! {
-            if #[cfg(feature = "histogram-snapshots")] {
-                let histogram = HistogramHandle::new();
-            } else {
-                let histogram = AtomicBucketInstant::new();
-            }
+        #[cfg(feature = "histogram-snapshots")]
+        {
+            Arc::new(HistogramHandle::new())
         }
-        Arc::new(histogram)
+        #[cfg(not(feature = "histogram-snapshots"))]
+        {
+            Arc::new(AtomicBucketInstant::new())
+        }
     }
 }
 

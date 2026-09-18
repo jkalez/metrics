@@ -1182,7 +1182,6 @@ version = "0.18.3"
 dependencies = [
  "arc-swap",
  "base64",
- "cfg-if",
  "evmap",
  "http-body-util",
  "hyper",
