@@ -40,7 +40,7 @@ _hyper-client = [
 ]
 
 [dependencies]
-arc-swap = { workspace = true }
+crossbeam-utils = { workspace = true, features = ["std"] }
 base64 = { workspace = true }
 quanta = { workspace = true }
 thiserror = { workspace = true }

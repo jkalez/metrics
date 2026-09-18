@@ -1099,9 +1099,7 @@ mod tests {
         assert_eq!(histogram.count(), 6);
         assert!((histogram.sum() - 2.0).abs() < f64::EPSILON);
         assert_eq!(histogram.schema(), buckets.scale);
-        assert!(
-            (histogram.config().zero_threshold() - buckets.zero_threshold).abs() < f64::EPSILON
-        );
+        assert!((histogram.config.zero_threshold() - buckets.zero_threshold).abs() < f64::EPSILON);
         assert_eq!(histogram.zero_count(), buckets.zero_count);
         assert_eq!(histogram.positive_buckets(), buckets.positive);
         assert_eq!(histogram.negative_buckets(), buckets.negative);
