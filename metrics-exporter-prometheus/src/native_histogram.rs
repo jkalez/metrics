@@ -1086,6 +1086,28 @@ mod tests {
     }
 
     #[test]
+    fn test_from_buckets() {
+        let buckets = ExponentialHistogramSnapshot {
+            scale: 1,
+            zero_threshold: 0.125,
+            zero_count: 1,
+            positive: [(1, 3)].into(),
+            negative: [(0, 2)].into(),
+        };
+        let histogram = NativeHistogram::from_buckets(buckets.clone(), 6, 2.0);
+
+        assert_eq!(histogram.count(), 6);
+        assert!((histogram.sum() - 2.0).abs() < f64::EPSILON);
+        assert_eq!(histogram.schema(), buckets.scale);
+        assert!(
+            (histogram.config().zero_threshold() - buckets.zero_threshold).abs() < f64::EPSILON
+        );
+        assert_eq!(histogram.zero_count(), buckets.zero_count);
+        assert_eq!(histogram.positive_buckets(), buckets.positive);
+        assert_eq!(histogram.negative_buckets(), buckets.negative);
+    }
+
+    #[test]
     fn test_observe_positive_values() {
         let config = NativeHistogramConfig::new(2.0, 160, 0.1).unwrap();
         let histogram = NativeHistogram::new(config);

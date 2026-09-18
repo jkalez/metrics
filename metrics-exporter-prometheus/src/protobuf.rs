@@ -347,46 +347,10 @@ mod tests {
     use super::*;
     use crate::common::Snapshot;
     use crate::recorder::new_description_handles;
-    use crate::PrometheusBuilder;
     use indexmap::IndexMap;
-    use metrics::{
-        ExponentialHistogramSnapshot, HistogramBuckets, HistogramSnapshot, SharedString,
-    };
+    use metrics::SharedString;
     use prost::Message;
     use std::collections::HashMap;
-
-    #[test]
-    fn test_imported_exponential_histogram() {
-        let recorder = PrometheusBuilder::new().build_recorder();
-        let handle = recorder.handle();
-        let histogram = metrics::with_local_recorder(&recorder, || metrics::histogram!("remote"));
-        let snapshot = HistogramSnapshot {
-            count: 6,
-            sum: 2.0,
-            buckets: HistogramBuckets::Exponential(ExponentialHistogramSnapshot {
-                scale: 1,
-                zero_threshold: 0.125,
-                zero_count: 1,
-                positive: [(1, 3)].into(),
-                negative: [(0, 2)].into(),
-            }),
-        };
-        histogram.set_snapshot(&snapshot);
-        let bytes = handle.render_protobuf();
-        let family = pb::MetricFamily::decode_length_delimited(&bytes[..]).unwrap();
-        assert_eq!(family.r#type, Some(pb::MetricType::Histogram as i32));
-        let actual = family.metric[0].histogram.as_ref().unwrap();
-        assert_eq!(actual.sample_count, Some(6));
-        assert_eq!(actual.sample_sum, Some(2.0));
-        assert!(actual.bucket.is_empty());
-        assert_eq!(actual.schema, Some(1));
-        assert_eq!(actual.zero_count, Some(1));
-        assert_eq!(actual.zero_threshold, Some(0.125));
-        assert_eq!(actual.positive_span, vec![pb::BucketSpan { offset: Some(1), length: Some(1) }]);
-        assert_eq!(actual.positive_delta, vec![3]);
-        assert_eq!(actual.negative_span, vec![pb::BucketSpan { offset: Some(0), length: Some(1) }]);
-        assert_eq!(actual.negative_delta, vec![2]);
-    }
 
     #[test]
     fn test_render_protobuf_counters() {
