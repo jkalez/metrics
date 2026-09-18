@@ -33,7 +33,6 @@ impl Histogram {
     ///
     /// Bounds must be finite and strictly increasing. Bucket counts must be nondecreasing
     /// and at most `count`, which also includes observations above the largest bound.
-    #[cfg(feature = "histogram-snapshots")]
     pub fn from_buckets(buckets: Vec<(f64, u64)>, count: u64, sum: f64) -> Self {
         let (bounds, buckets) = buckets.into_iter().unzip();
         Self { count, bounds, buckets, sum }

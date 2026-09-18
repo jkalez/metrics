@@ -212,14 +212,6 @@ impl Inner {
         }
 
         for (name, mut by_labels) in distributions.drain() {
-            #[cfg(not(feature = "histogram-snapshots"))]
-            let distribution_type = self.distribution_builder.get_distribution_type(name.as_str());
-            #[cfg(not(feature = "histogram-snapshots"))]
-            if distribution_type == "native_histogram" {
-                continue;
-            }
-
-            #[cfg(feature = "histogram-snapshots")]
             let Some(distribution_type) =
                 by_labels.values().find_map(|distribution| match distribution {
                     Distribution::Summary(..) => Some("summary"),
